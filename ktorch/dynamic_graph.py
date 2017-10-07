@@ -1,4 +1,5 @@
 from .graph.op import get_op
+from .backend import int_shape
 import patchy
 import inspect
 
@@ -8,57 +9,51 @@ import inspect
 
 
 def is_torched(layer_class):
-	layer_class_name = layer_class.__name__
-	attr = '_' + layer_class_name + '_torched'
-	return hasattr(layer_class, attr)
+    layer_class_name = layer_class.__name__
+    attr = '_' + layer_class_name + '_torched'
+    return hasattr(layer_class, attr)
 
 
 def torch_layer(layer_class):
-	if is_torched(layer_class):
-		return
-	layer_class._call = layer_class.call
-	layer_class._compute_mask = layer_class.compute_mask
-	class Dummy(object):
+    if is_torched(layer_class):
+        return
+    layer_class._call = layer_class.call
+    layer_class._compute_mask = layer_class.compute_mask
+    class Dummy(object):
 
-		def call(self, inputs, mask=None, **kwargs):
-			call_fn = self._call
-			shape_fn = self.compute_output_shape
-			if mask is not None:
-				kwargs['mask'] = mask
-			op = get_op(call_fn, output_shape=shape_fn, arguments=kwargs)
-			return op(inputs)
+        def call(self, inputs, mask=None, **kwargs):
+            call_fn = self._call
+            if type(inputs) is list:
+                shapes = [int_shape(x) for x in inputs]
+            else:
+                shapes = int_shape(inputs)
+            output_shape = self.compute_output_shape(shapes)
+            if mask is not None:
+                kwargs['mask'] = mask
+            op = get_op(call_fn, output_shape=lambda *_: output_shape, arguments=kwargs)
+            return op(inputs)
 
-		def compute_mask(self, inputs, previous_mask):
-			if type(inputs) is list:
-				x = inputs
-			else:
-				x = [inputs]
-			num_inputs = len(x)
-			if type(previous_mask) is list:
-				x += previous_mask
-			else:
-				x.append(previous_mask)
-			def mask(x, n, fn):
-				i = x[:n]
-				m = x[n:]
-				o = fn(i, m)
-				return o
-			op = get_op(mask, arguments=[num_inputs, self._compute_mask])
-			return op(x)
+        def compute_mask(self, inputs, previous_mask):
+            def mask(x, m, fn):
+                o = fn(x, m)
+                return o
+            op = get_op(mask, arguments=[previous_mask, self._compute_mask])
+            return op(inputs)
 
-	layer_class.call = Dummy.call
-	layer_class.compute_mask = Dummy.compute_mask
-	layer_class_name = layer_class.__name__
-	attr = '_' + layer_class_name + '_torched'
-	setattr(layer_class, attr, True)
+    layer_class.call = Dummy.call
+    layer_class.compute_mask = Dummy.compute_mask
+    layer_class_name = layer_class.__name__
+    attr = '_' + layer_class_name + '_torched'
+    setattr(layer_class, attr, True)
 
 
 def torch_all_layers(globals):
-	classes = globals().values()
-	for c in classes:
-		if type(c) is type:
-			if issubclass(c, Layer):
-				torch_layer(c)
+    from keras.layers import Layer
+    classes = globals.values()
+    for c in classes:
+        if type(c) is type:
+            if issubclass(c, Layer):
+                torch_layer(c)
 
 
 class Dummy(object):
@@ -138,7 +133,7 @@ class Dummy(object):
             input_shape = _collect_input_shape(inputs)
 
             # Actually call the layer, collecting output(s), mask(s), and shape(s).
-            from ktorch.monkeypatch import torch_layer
+            from ktorch.dynamic_graph import torch_layer
             torch_layer(self.__class__)
             output = self.call(inputs, **kwargs)
             output_mask = self.compute_mask(inputs, previous_mask)
@@ -188,12 +183,15 @@ class Dummy(object):
 
 
 def _patch_keras_engine():
-	from keras.layers import Layer
-	layer_call_fn = Layer.__call__
-	patch_source = inspect.getsource(Dummy.__call__)
-	patchy.replace(layer_call_fn, None, patch_source)
+    from keras.layers import Layer
+    layer_call_fn = Layer.__call__
+    patch_source = inspect.getsource(Dummy.__call__)
+    patchy.replace(layer_call_fn, None, patch_source)
 
+
+_KERAS_ENGINE_PATCHED = False
 
 def initialize(globals):
     torch_all_layers(globals)
-    _patch_keras_engine()
+    if not _KERAS_ENGINE_PATCHED:
+        _patch_keras_engine()

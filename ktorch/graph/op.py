@@ -25,6 +25,7 @@ def _get_shape(x):
         return ()
     return None
 
+
 class Op(object):
 
     def __init__(self, arguments={}):
@@ -44,7 +45,7 @@ class Op(object):
                 is_symbolic = isinstance(tensors[0], Tensor)
                 for i in tensors[1:]:
                     if isinstance(i, Tensor) != is_symbolic:
-                        raise Exception('Op was given a mix of symbolic and non symbolic inputs')
+                        raise Exception('Op was given a mix of symbolic and non symbolic inputs', tensors)
             else:
                 is_symbolic = False
             x_len = len(x)
@@ -54,10 +55,7 @@ class Op(object):
                 x = list(x)
         else:
             x_len = 1
-            if not _is_num(x) and isinstance(x, Tensor):
-                is_symbolic = True
-            else:
-                is_symbolic = False
+            is_symbolic = isinstance(x, Tensor)
         self._check_num_inputs(x_len)
         if not is_symbolic:
             if not self.arguments:

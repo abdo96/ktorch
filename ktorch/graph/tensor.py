@@ -28,7 +28,7 @@ class Tensor(object):
         self.dtype = dtype
 
     def eval(self):
-        if not hasattr(self, 'value') or self.value is None:
+        if not hasattr(self, 'value'):
             if not hasattr(self, 'op') or self.op is None:
                 raise Exception('Input tensor was not provided value.')
             if type(self.inputs) is list:
@@ -48,16 +48,20 @@ class Tensor(object):
         return self.value
 
     def set_value(self, value):
-        self.value = value
-        self.dtype = self._get_dtype(value)
-        self.shape = self._get_shape(value)
+        if value is None:
+            if hasattr(self, 'value'):
+                del self.value
+            self.dtype = None
+            self.shape = None
+        else:
+            self.value = value
+            self.dtype = self._get_dtype(value)
+            self.shape = self._get_shape(value)
         [node.ping(self) for node in self.nodes]
 
     def _get_shape(self, value):
         if type(value) is list:
             return list(map(self._get_shape, value))
-        if value is None:
-            return None
         if hasattr(value, 'shape'):
             shape = value.shape
         elif hasattr(value, 'size'):
@@ -69,8 +73,6 @@ class Tensor(object):
     def _get_dtype(self, value):
         if type(value) is list:
             return list(map(self._get_dtype, value))
-        if value is None:
-            return None
         dtype = getattr(value, 'dtype', type(value))
         if dtype is not None and type(dtype) is not str:
             if hasattr(dtype, 'name'):
