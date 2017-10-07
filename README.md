@@ -1,9 +1,9 @@
 # Ktorch: PyTorch Backend for Keras
 
-##### Note : As of now, there is no integration with PyTorch. This is simply a template for accomodating both imperative and symbolic programming.
+##### Still WIP
 ------
 
-## Examples
+## Internal topology library
 
 ### Imperative
 
@@ -90,6 +90,31 @@ print d.value
 17
 '''
 ```
+
+
+## Working with Keras
+
+* Use `ktorch` branch of my fork
+
+```python
+git clone http://www.github.com/farizrahman4u/keras.git
+cd keras
+git checkout ktorch
+python setup.py install
+```
+
+* Make sure `import keras` prints `Using Torch backend`
+
+* This allows using if statements, loops etc in custom layers (order of imports is important):
+
+```
+from keras.layers import *
+from ktorch import dynamic_graph
+dynamic_graph.initialize(globals())
+```
+
+
+
 
 
 
