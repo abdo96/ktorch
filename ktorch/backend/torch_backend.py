@@ -3,6 +3,61 @@ import torch
 import torch.nn.functional as F
 import keras
 from ..graph import *
+from collections import defaultdict
+from contextlib import contextmanager
+from keras.backend.common import set_image_dim_ordering, image_dim_ordering
+from keras.backend.common import floatx, epsilon, image_data_format
+
+
+py_all = all
+py_sum = sum
+
+
+
+_LEARNING_PHASE = Tensor(name='keras_learning_phase')
+_UID_PREFIXES = defaultdict(int)
+
+
+def learning_phase():
+    return _LEARNING_PHASE
+
+
+def set_learning_phase(value):
+    global _LEARNING_PHASE
+    _LEARNING_PHASE = value
+
+
+def get_uid(prefix=''):
+    _UID_PREFIXES[prefix] += 1
+    return _UID_PREFIXES[prefix]
+
+
+def reset_uids():
+    global _UID_PREFIXES
+    _UID_PREFIXES = defaultdict(int)
+
+
+NAME_SCOPE_STACK = []
+
+
+@contextmanager
+def name_scope(name):
+    global NAME_SCOPE_STACK
+    NAME_SCOPE_STACK.append(name)
+    yield
+    NAME_SCOPE_STACK.pop()
+
+
+def _prepare_name(name, default):
+    prefix = '/'.join(NAME_SCOPE_STACK)
+    if name is None:
+        return prefix + '/' + default
+    return prefix + '/' + name
+
+
+def is_keras_tensor(x):
+    return hasattr(x, '_keras_history')
+
 
 
 def _is_num(x):
@@ -10,7 +65,7 @@ def _is_num(x):
         float(x)
         return True
     except:
-        return False
+        return 'numpy' in str(type(x))
 
 
 def _get_shape(x):
@@ -25,35 +80,71 @@ def _get_shape(x):
     return None
 
 
-def variable(value, dtype=None, name=None):
-    if dtype is None:
-        dtype = keras.backend.floatx()
-    if value.dtype.name != dtype:
-        value = np.cast[dtype](value)
-    torch_tensor = torch.from_numpy(value)
-    torch_variable = torch.autograd.Variable(torch_tensor, requires_grad=True)
-    ktorch_variable = Variable(torch_variable, name=name)
-    return ktorch_variable
+def make_keras_tensor(tensor, uses_learning_phase=False):
+    tensor._keras_shape = int_shape(tensor)
+    tensor._uses_learning_phase = uses_learning_phase
 
 
-def constant(value, dtype=None, name=None):
+def variable(value, dtype=None, name=None, constraint=None):
+    if isinstance(value, Tensor):
+        value = value.value
+    if isinstance(value, torch.autograd.Variable):
+        value = value.data
+    if 'torch' in str(type(value)):
+        value = value.numpy()
+    name = _prepare_name(name, 'variable')
     if dtype is None:
         dtype = keras.backend.floatx()
     if value.dtype != dtype:
         value = np.cast[dtype](value)
     torch_tensor = torch.from_numpy(value)
+    torch_variable = torch.autograd.Variable(torch_tensor, requires_grad=True)
+    ktorch_variable = Variable(torch_variable, name=name)
+    ktorch_variable.constraint = None
+    make_keras_tensor(ktorch_variable)
+    return ktorch_variable
+
+
+def constant(value, dtype=None, shape=None, name=None):
+    value = np.array(value)
+    name = _prepare_name(name, 'constant')
+    if dtype is None:
+        dtype = keras.backend.floatx()
+    if value.dtype != dtype:
+        value = np.cast[dtype](value)
+    if value.shape == ():
+        if shape is None:
+            shape = ()
+        value = np.ones(shape) * value
+    torch_tensor = torch.from_numpy(value)
     torch_variable = torch.autograd.Variable(torch_tensor, requires_grad=False)
     ktorch_variable = Variable(torch_variable, name=name)
+    make_keras_tensor(ktorch_variable)
     return ktorch_variable
 
 
 def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
+    name = _prepare_name(name, 'placeholder')
     if sparse:
         raise Exception('Sparse tensors are not supported yet :( ')
     if dtype is None:
         dtype = keras.backend.floatx()
     ktorch_tensor = Tensor(name=name, shape=shape, ndim=ndim, dtype=dtype)
+    make_keras_tensor(ktorch_tensor)
+    ktorch_tensor._ktorch_placeholder = True
     return ktorch_tensor
+
+
+def is_placeholder(x):
+    """Returns whether `x` is a placeholder.
+
+    # Arguments
+        x: A candidate placeholder.
+
+    # Returns
+        Boolean.
+    """
+    return hasattr(x, '_torch_placeholder') and x._torch_placeholder
 
 
 def shape(x):
@@ -87,7 +178,12 @@ def dtype(x):
 
 
 def eval(x):
-    return x.eval().numpy()
+    y = x.eval()
+    if hasattr(y, 'data'):
+        y = y.data
+    if hasattr(y, 'numpy'):
+        y = y.numpy()
+    return y
 
 
 def zeros(shape, dtype=None, name=None):
@@ -162,12 +258,59 @@ def update_sub(x, decrement):
 def moving_average_update(variable, value, momentum):
     return (variable, variable * momentum + value * (1. - momentum))
 
+def bias_add(x, bias, data_format=None):
+    if data_format is None:
+        data_format = image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if ndim(bias) != 1 and ndim(bias) != ndim(x) - 1:
+        raise ValueError('Unexpected bias dimensions %d, '
+                         'expect to be 1 or %d dimensions'
+                         % (ndim(bias), ndim(x) - 1))
+    bias_shape = tuple(bias.shape)
+    if ndim(x) == 5:
+        if data_format == 'channels_first':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, bias_shape[0], 1, 1, 1))
+            else:
+                x += reshape(bias, (1, bias_shape[3]) + bias_shape[:3])
+        elif data_format == 'channels_last':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, 1, 1, 1, bias_shape[0]))
+            else:
+                x += reshape(bias, (1,) + bias_shape)
+    elif ndim(x) == 4:
+        if data_format == 'channels_first':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, bias_shape[0], 1, 1))
+            else:
+                x += reshape(bias, (1, bias_shape[2]) + bias_shape[:2])
+        elif data_format == 'channels_last':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, 1, 1, bias_shape[0]))
+            else:
+                x += reshape(bias, (1,) + bias_shape)
+    elif ndim(x) == 3:
+        if data_format == 'channels_first':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, bias_shape[0], 1))
+            else:
+                x += reshape(bias, (1, bias_shape[1], bias_shape[0]))
+        elif data_format == 'channels_last':
+            if ndim(bias) == 1:
+                x += reshape(bias, (1, 1, bias_shape[0]))
+            else:
+                x += reshape(bias, (1,) + bias_shape)
+    else:
+        x += bias
+    return x
 
 def dot(x, y):
     def _dot(X):
         x, y = X
-        x_ndim = len(x.size())
-        y_ndim = len(y.size())
+        print (type(x), type(y))
+        x_ndim = ndim(x)
+        y_ndim = ndim(y)
         if x_ndim == 2 and y_ndim == 2:
             return torch.mm(x, y)
         if x_ndim == 2 and y_ndim == 1:
@@ -862,7 +1005,7 @@ def random_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
 def random_uniform(shape, minval=0.0, maxval=1.0, dtype=None, seed=None):
     #TODO dtype
     #TODO seed
-    return torch.from_numpy(np.random.uniform(mean, stddev, shape))
+    return torch.from_numpy(np.random.uniform(minval, maxval, shape))
 
 
 def random_binomial(shape, p=0.0, dtype=None, seed=None):

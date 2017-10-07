@@ -1,4 +1,6 @@
 from .tensor import Tensor
+from .variable import Variable
+
 
 class Function(object):
 
@@ -12,6 +14,8 @@ class Function(object):
 		self._check_disconnected_graph()
 
 	def _check_tensor(self, tensor):
+		if isinstance(tensor, Variable):
+			return True
 		if not isinstance(tensor, Tensor):
 			return True
 		if not hasattr(tensor, 'op') or tensor.op is None:

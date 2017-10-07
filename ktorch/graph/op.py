@@ -13,7 +13,7 @@ def _is_num(x):
         float(x)
         return True
     except:
-        return False
+        return 'numpy' in str(type(x))
 
 
 def _get_shape(x):
@@ -38,14 +38,35 @@ class Op(object):
 
     def __call__(self, x):
         if type(x) in [list, tuple]:
+            x = x[:]
+            tensors = [t for t in x if not _is_num(t)]
+            if tensors:
+                is_symbolic = isinstance(tensors[0], Tensor)
+                for i in tensors[1:]:
+                    if isinstance(i, Tensor) != is_symbolic:
+                        raise Exception('Op was given a mix of symbolic and non symbolic inputs')
+            else:
+                is_symbolic = False
             x_len = len(x)
-            if len(x) == 1:
+            if x_len == 1:
                 x = x[0]
             else:
                 x = list(x)
         else:
             x_len = 1
+            if not _is_num(x) and isinstance(x, Tensor):
+                is_symbolic = True
+            else:
+                is_symbolic = False
         self._check_num_inputs(x_len)
+        if not is_symbolic:
+            if not self.arguments:
+                return self.call(x)
+            args_type = type(self.arguments)
+            if args_type is dict:
+                return self.call(x, **self.arguments)
+            else:
+                return self.call(x, *self.arguments)
         y = Tensor()
         y.op = self
         y.inputs = x

@@ -10,7 +10,7 @@ class Node(object):
 			outputs = [outputs]
 		self.inputs = [inp for inp in inputs if isinstance(inp, Tensor)]
 		self.outputs = [op for op in outputs if isinstance(op, Tensor)]
-		self.evaluated_inputs = [hasattr(inp, 'value') for inp in self.inputs]
+		self.evaluated_inputs = [hasattr(inp, 'value') and inp.value for inp in self.inputs]
 		if all(self.evaluated_inputs):
 			for output in self.outputs:
 				output.eval()
@@ -19,6 +19,12 @@ class Node(object):
 
 	def ping(self, tensor):
 		idx = self.inputs.index(tensor)
+		if tensor.value is None:
+			self.evaluated_inputs[idx] = False
+			for output in self.outputs:
+				if hasattr(output, 'value'):
+					output.set_value(None)
+			return
 		self.evaluated_inputs[idx] = True
 		if all(self.evaluated_inputs):
 			for output in self.outputs:
