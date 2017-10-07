@@ -3,6 +3,10 @@ import patchy
 import inspect
 
 
+# allows if statements, python loops,
+# torch built-ins etc in custom layers
+
+
 def is_torched(layer_class):
 	layer_class_name = layer_class.__name__
 	attr = '_' + layer_class_name + '_torched'
@@ -182,8 +186,14 @@ class Dummy(object):
                 self.add_loss(regularization_losses, _to_list(inputs))
         return output
 
-def patch_keras_engine():
+
+def _patch_keras_engine():
 	from keras.layers import Layer
 	layer_call_fn = Layer.__call__
 	patch_source = inspect.getsource(Dummy.__call__)
 	patchy.replace(layer_call_fn, None, patch_source)
+
+
+def initialize(globals):
+    torch_all_layers(globals)
+    _patch_keras_engine()
