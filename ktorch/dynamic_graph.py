@@ -49,7 +49,7 @@ def torch_layer(layer_class):
 
 def torch_all_layers(globals):
     from keras.layers import Layer
-    classes = globals.values()
+    classes = globals().values()
     for c in classes:
         if type(c) is type:
             if issubclass(c, Layer):

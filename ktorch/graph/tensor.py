@@ -28,33 +28,30 @@ class Tensor(object):
         self.dtype = dtype
 
     def eval(self):
-        if not hasattr(self, 'value'):
+        if not hasattr(self, 'value') or self.value is None:
             if not hasattr(self, 'op') or self.op is None:
                 raise Exception('Input tensor was not provided value.')
             if type(self.inputs) is list:
                 inputs = [evaluate(x) for x in self.inputs]
             else:
                 inputs = evaluate(self.inputs)
-            shape_argspec = inspect.getargspec(self.op.compute_output_shape)
-            dtype_argspec = inspect.getargspec(self.op.compute_output_dtype)
-            self.set_value(self.op(inputs))
-            return self.value
-            if type(self.op.arguments) is dict:
-                self.set_value(self.op.call(inputs, **self.op.arguments))
-            elif type(self.op.arguments) is list:
-                self.set_value(self.op.call(inputs, *self.op.arguments))
+            args = self.op.arguments
+            args_type = type(args)
+            if args_type in [list, tuple]:
+                y = self.op.call(inputs, *args)
+            elif args_type is dict:
+                y = self.op.call(inputs, **args)
             else:
-                self.set_value(self.op.call(inputs))
+                y = self.op.call(inputs)
+            self.set_value(y)
         return self.value
 
     def set_value(self, value):
+        self.value = value
         if value is None:
-            if hasattr(self, 'value'):
-                del self.value
             self.dtype = None
             self.shape = None
         else:
-            self.value = value
             self.dtype = self._get_dtype(value)
             self.shape = self._get_shape(value)
         [node.ping(self) for node in self.nodes]

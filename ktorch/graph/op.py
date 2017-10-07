@@ -41,13 +41,19 @@ class Op(object):
         if type(x) in [list, tuple]:
             x = x[:]
             tensors = [t for t in x if not _is_num(t)]
-            if tensors:
-                is_symbolic = isinstance(tensors[0], Tensor)
-                for i in tensors[1:]:
-                    if isinstance(i, Tensor) != is_symbolic:
-                        raise Exception('Op was given a mix of symbolic and non symbolic inputs', tensors)
-            else:
+            # search for non ktorch objs
+            found = False
+            for t in tensors:
+                if not isinstance(t, Tensor):
+                    found = True
+                    break
+            if found:
+                for i, t in enumerate(x):
+                    if isinstance(t, Tensor):
+                        x[i] = t.eval()
                 is_symbolic = False
+            else:
+                is_symbolic = True
             x_len = len(x)
             if x_len == 1:
                 x = x[0]
