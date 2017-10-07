@@ -174,12 +174,16 @@ def ndim(x):
 
 
 def dtype(x):
-    return x.dtype
+    if isinstance(x, Tensor):
+        x = x.eval()
+    if isinstance(x, torch.autograd.Variable):
+        x = x.data
+    return type(x)
 
 
 def eval(x):
     y = x.eval()
-    if hasattr(y, 'data'):
+    if 'torch' in str(type(x)) and hasattr(y, 'data'):
         y = y.data
     if hasattr(y, 'numpy'):
         y = y.numpy()
@@ -234,11 +238,9 @@ def random_normal_variable(shape, mean, scale, dtype=None, name=None):
 
 
 def cast(x, dtype):
-    digs = list(map(str, range(10)))
-    while dtype[-1] in digs:
-        dtype = dtype[:-1]
-    y = get_op(lambda x: getattr(x, dtype)())(x)
-    return y
+    def _cast(x, dtype):
+        return x.type(dtype)
+    return get_op(_cast, arguments=[dtype])(x)
 
 # UPDATES OPS
 

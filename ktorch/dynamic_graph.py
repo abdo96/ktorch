@@ -33,15 +33,9 @@ def torch_layer(layer_class):
             op = get_op(call_fn, output_shape=lambda *_: output_shape, arguments=kwargs)
             return op(inputs)
 
-        def compute_mask(self, inputs, previous_mask):
-            def mask(x, m, fn):
-                o = fn(x, m)
-                return o
-            op = get_op(mask, arguments=[previous_mask, self._compute_mask])
-            return op(inputs)
-
     layer_class.call = Dummy.call
-    layer_class.compute_mask = Dummy.compute_mask
+    #patchy.replace(layer_class.compute_mask, None, inspect.getsource(Dummy.compute_mask))
+    #layer_class.compute_mask = Dummy.compute_mask
     layer_class_name = layer_class.__name__
     attr = '_' + layer_class_name + '_torched'
     setattr(layer_class, attr, True)
@@ -49,11 +43,13 @@ def torch_layer(layer_class):
 
 def torch_all_layers(globals):
     from keras.layers import Layer
-    classes = globals().values()
+    classes = globals.values()
     for c in classes:
         if type(c) is type:
             if issubclass(c, Layer):
                 torch_layer(c)
+
+
 
 
 class Dummy(object):
@@ -120,6 +116,19 @@ class Dummy(object):
             self.assert_input_compatibility(inputs)
 
             # Handle mask propagation.
+            def __collect_previous_mask(input_tensors):
+                    masks = []
+                    for x in input_tensors:
+                        if hasattr(x, '_keras_history'):
+                            inbound_layer, node_index, tensor_index = x._keras_history
+                            node = inbound_layer.inbound_nodes[node_index]
+                            mask = node.output_masks[tensor_index]
+                            masks.append(mask)
+                        else:
+                            masks.append(None)
+                    if len(masks) == 1:
+                        return masks[0]
+                    return masks
             previous_mask = _collect_previous_mask(inputs)
             user_kwargs = copy.copy(kwargs)
             if not _is_all_none(previous_mask):
@@ -137,7 +146,7 @@ class Dummy(object):
             torch_layer(self.__class__)
             output = self.call(inputs, **kwargs)
             output_mask = self.compute_mask(inputs, previous_mask)
-
+            #output_mask = get_op(self.compute_mask, arguments=[previous_mask])(inputs)
             # If the layer returns tensors from its inputs, unmodified,
             # we copy them to avoid loss of tensor metadata.
             output_ls = _to_list(output)
